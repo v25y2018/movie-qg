@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>教員用ダッシュボード</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    h1 { color: #2c3e50; }
+    label, input, button { display: block; margin: 1rem 0; }
+    #output { margin-top: 1rem; white-space: pre-wrap; background: #f4f4f4; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>講義動画のアップロード</h1>
+
+  <form id="uploadForm">
+    <label for="course">コース名</label>
+    <input type="text" id="course" name="course" required>
+
+    <label for="section">セクション名</label>
+    <input type="text" id="section" name="section" required>
+
+    <label for="title">動画名</label>
+    <input type="text" id="title" name="title" required>
+
+    <label for="videoId">動画ID</label>
+    <input type="text" id="videoId" name="videoId" required>
+
+    <label for="video">動画ファイル（MP4）</label>
+    <input type="file" id="video" name="video" accept="video/mp4" required />
+
+    <button type="submit">アップロード & 処理開始</button>
+  </form>
+
+  <div id="output"></div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const output = document.getElementById('output');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData();
+      const fileInput = document.getElementById('video');
+
+      // 入力された各種データを取得して追加
+      formData.append('video', fileInput.files[0]);
+      formData.append('course', document.getElementById('course').value);
+      formData.append('section', document.getElementById('section').value);
+      formData.append('title', document.getElementById('title').value);
+      formData.append('videoId', document.getElementById('videoId').value);
+
+      output.textContent = "アップロード中...";
+
+      try {
+        const res = await fetch('http://localhost:3001/uploads', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          output.textContent = "✅ " + data.message + "\n\n" + (data.output || "処理結果はありません");
+        } else {
+          output.textContent = "❌ エラー\n" + (data.stderr || data.error);
+        }
+      } catch (err) {
+        output.textContent = "⚠️ 通信エラー: " + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
