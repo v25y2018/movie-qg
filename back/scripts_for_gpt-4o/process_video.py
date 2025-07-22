@@ -23,7 +23,7 @@ createdat = datetime.utcnow().isoformat()
 
 # Chromaの保存先パス
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
-CHUNK_SIZE = 150
+CHUNK_SIZE = 200
 
 # Whisperモデルをロード
 whisper_model = whisper.load_model("small")
