@@ -5,7 +5,7 @@ from chromadb import PersistentClient
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
 
 # 検索対象の video_id（必要に応じて変更）
-TARGET_VIDEO_ID = "20250003001"
+TARGET_VIDEO_ID = "2"
 
 def show_chroma_documents(video_id):
     # Chromaクライアントの初期化
@@ -24,7 +24,7 @@ def show_chroma_documents(video_id):
         print(f"--- Document {idx + 1} ---")
         print(f"ID: {id_}")
         print(f"Metadata: {meta}")
-        print(f"Document: {doc[:3000]}...")  # 長すぎる場合は冒頭300文字だけ
+        print(f"Document: {doc[:3000]}")  # 長すぎる場合は冒頭3000文字だけ
         print()
 
 if __name__ == "__main__":
