@@ -35,5 +35,5 @@ def list_qg(video_id):
 
 if __name__ == "__main__":
     # 任意のvideoIdを指定
-    video_id = "2"
+    video_id = "net15"
     list_qg(video_id)

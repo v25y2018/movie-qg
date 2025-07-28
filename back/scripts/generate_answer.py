@@ -22,16 +22,14 @@ def get_slide_segments(video_id):
 # プロンプト作成
 def make_prompt(course, ocr, voice):
     return f"""
-あなたは{course}の講師です。以下のスライドの文字起こし{voice}と、スライド上のキーワード{ocr}に基づき、学生の理解度を確認するような、振り返りテストの質問と解答を複数生成してください。
+あなたは{course}の講師です。以下の音声の文字起こし{voice}と、スライド上の単語{ocr}に基づき、学生の理解度を確認するような、
+振り返りテストの質問と解答を複数生成してください。
 
 質問は、学生が単独で見ても意味が通るように明確で簡潔にしてください。
 
-重要度（priority）は0.0〜10.0の範囲で適切に設定してください。
+重要度（priority）は0.0〜10.0の範囲で適切に設定してください。JSONパーサーでエラーが出ないよう、文字列内の改行や記号にも注意してください
 
 絶対にJSON形式の配列のみで出力してください。「以上で終わります」「以下が結果です」などの説明は不要です。
-
-すべての項目（question, answer, priority）は必ず "（ダブルクォーテーション）で囲ってください。また、各オブジェクトは 括弧で囲み、配列全体は [] で囲ってください。JSONパーサーでエラーが出ないよう、文字列内の改行や記号にも注意してください。
-
 出力形式---
 [
   {{"question": "質問文1", "answer": "解答1", "priority": "重要度"}},
@@ -116,8 +114,8 @@ def save_qna(video_id, course, section, voice, qna_list, slide_index):
 
 # メイン処理
 def main():
-    video_id = "2"  # 必要に応じて変更
-    course = "大分大学入門"
+    video_id = "net15"  # 必要に応じて変更
+    course = "情報セキュリティ"
     section = "1"
 
     slides = list(get_slide_segments(video_id))

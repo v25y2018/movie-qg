@@ -1,4 +1,6 @@
 import os
+os.environ["TESSDATA_PREFIX"] = "/opt/homebrew/share/tessdata/"
+
 import sys
 import io
 import subprocess

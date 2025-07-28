@@ -1,0 +1,42 @@
+[
+  {
+    "question": "Wiresharkというソフトウェアは何を扱う?",
+    "answer": "ネットワークトラフィックのキャプチャと分析",
+    "priority": "8.0"
+  },
+  {
+    "question": "TCPストームとは何?"
+    "answer": "",
+    "priority": ""
+  },
+  {
+    "question": "SSH (Secure Shell)はなにか?",
+    "answer": "セキュアな遠隔操作プロトコル",
+    "priority": "9.0"
+  },
+  {
+    "question": "CD 55 mm cd 0 sal SSH 2 9 QpenSSH 7 2 p 2 Ubuntu 4 ubuntu 2 2 の内容について、何がわかりますか?"
+    "answer": "",
+    "priority": ""
+  },
+  {
+    "question": "SSH接続のための鍵認証に使われる暗号アルゴリズムはなにか?",
+    "answer": "ECDH (Elliptic Curve Diffie-Hellman)、ECDHE (Elliptic Curve Diffie-Hellman の Key-Exchange)",
+    "priority": "9.0"
+  },
+  {
+    "question": "OpenSSHの鍵認証に使われる暗号アルゴリズムはなにか?",
+    "answer": "RSA、ECDSA",
+    "priority": "8.0"
+  },
+  {
+    "question": "ハッシュ関数の例として何が挙げられますか?"
+    "answer": "",
+    "priority": ""
+  },
+  {
+    "question": "SSHで使われる暗号化アルゴリズムの例として何が挙げられますか?",
+    "answer": "",
+    "priority": ""
+  }
+]
