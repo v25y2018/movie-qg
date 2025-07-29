@@ -1,7 +1,9 @@
 venv/
+venv310/
+uploads/
+*.table
 *.sqlite
 *.mp4
 chroma_db/
 node_modules/
-
 

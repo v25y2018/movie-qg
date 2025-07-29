@@ -10,7 +10,7 @@ from chromadb import PersistentClient
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/qg.sqlite3"))
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3.1"  # 使用するモデル名
+MODEL_NAME = "qwen3:32b"  # 使用するモデル名
 
 # Chromaからセグメント単位で取得（スライド単位）
 def get_slide_segments(video_id):
@@ -116,7 +116,7 @@ def save_qna(video_id, course, section, voice, qna_list, slide_index):
 
 # メイン処理
 def main():
-    video_id = "net15"  # 必要に応じて変更
+    video_id = "Oita-01"  # 必要に応じて変更
     course = "大分大学入門"
     section = "1"
 

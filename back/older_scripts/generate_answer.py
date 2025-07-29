@@ -9,7 +9,7 @@ from chromadb import PersistentClient
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/qg.sqlite3"))
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3.1"  # 必要に応じて変更可
+MODEL_NAME = "qwen3:32b"  # 必要に応じて変更可
 
 # Chromaからvoice取得
 def get_voice_from_chroma(video_id):
@@ -19,36 +19,16 @@ def get_voice_from_chroma(video_id):
     return " ".join(results["documents"])
 
 # voiceを指定文字数で分割
-def split_voice(voice, chunk_size=3000):
+def split_voice(voice, chunk_size=22000):
     return [voice[i:i + chunk_size] for i in range(0, len(voice), chunk_size)]
 
 # プロンプト作成
 def make_prompt(course, voice_chunk):
     return f"""
-あなたは{course}の先生です。以下の講義文字起こしであるvoice_chunkを考慮してテキスト内の表現をそのまま使って、振り返りテスト用の質問と回答を生成してください。
+あなたは{course}の先生です。以下の講義文字起こしである『voice_chunk』を考慮してテキスト内の表現をそのまま使って、振り返りテスト用の質問と回答を複数生成してください。
 質問は、質問単体で見ても学生がわかるように明瞭に、かつ簡潔に書いてください。
 
-講義における、問題の重要度を決定してください。重要度は0.0 ~ 10.0の範囲で出力してください。
-
-振り返りテストの問題は複数になっても問題ありません。ただし、出力形式(JSON)を守ってください。
-
-・絶対にJSON形式の配列だけを出力してください
-
-・解説や補足は不要です。絶対に出力しないでください。例えば、「ここでは、講義文字起こしに基づいて振り返りテスト用の質問と回答を生成します。」、「以下が生成された質問と回答となります。」
-といった案内のメッセージは不要です。絶対にJSONのみを出力してください。
-
-・JSONの閉じ括弧”]”を忘れないようにしてください。
-
-
-出力形式:
-[
-  {{"question": "質問文1", "answer": "解答1" ,"priority": "重要度"}},
-  {{"question": "質問文2", "answer": "解答2" ,"priority": "重要度"}},
-  ...
-
-]
-
---- 講義文字起こし ---
+--- 講義文字起こし『voice_chunk』 ---
 {voice_chunk}
 """
 
@@ -103,16 +83,16 @@ def save_qna(video_id, course, section, voice_chunk, qna_list, chunk_index):
 
 # メイン処理
 def main():
-    video_id = "202509999888"  # ← 必要に応じて変更
+    video_id = "Oita-01"  # ← 必要に応じて変更
     course = "大分大学入門"
-    section = "セキュリティ"
+    section = "第一回"
 
     voice = get_voice_from_chroma(video_id)
     if not voice:
         print("voiceが見つかりません")
         return
 
-    chunks = split_voice(voice, chunk_size=3000)
+    chunks = split_voice(voice, chunk_size=22000)
     print(f"チャンク数: {len(chunks)}")
 
     for idx, chunk in enumerate(chunks):

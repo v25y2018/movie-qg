@@ -1,0 +1,159 @@
+import os
+import re
+import sqlite3
+import json
+from datetime import datetime
+from chromadb import PersistentClient
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# 環境設定
+CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/qg.sqlite3"))
+MODEL_NAME = "llm-jp/llm-jp-3-1.8b"
+
+# モデルとトークナイザの読み込み（初期化はグローバルに1回だけ）
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto", torch_dtype=torch.bfloat16)
+
+# text 入手
+def load_voice_text():
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../outputs/Oita-01.txt"))
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+# Chromaからセグメント単位で取得（スライド単位）
+def get_slide_segments(video_id):
+    client = PersistentClient(path=CHROMA_PATH)
+    collection = client.get_or_create_collection("video-transcripts")
+    results = collection.get(where={"video_id": video_id})
+    return zip(results["documents"], results["metadatas"])
+
+# プロンプト作成
+def make_prompt(course, ocr, voice):
+    return f"""
+あなたは{course}の講師です。以下のスライドの文字起こし{voice}を元に
+学生の理解度を確認する振り返りテストの質問と解答をJSON形式で複数生成してください。
+形式は次の通りです：
+[
+  {{
+    "question": "...",
+    "answer": "..."
+  }},
+  ...
+]
+"""
+
+# LLM呼び出し（llm-jpモデル）
+def generate_qna_with_llmjp(prompt):
+    chat = [
+        {"role": "system", "content": "以下は、タスクを説明する指示です。要求を適切に満たす応答を書きなさい。"},
+        {"role": "user", "content": prompt}
+    ]
+    tokenized_input = tokenizer.apply_chat_template(
+        chat, add_generation_prompt=True, tokenize=True, return_tensors="pt"
+    ).to(model.device)
+
+    with torch.no_grad():
+        output = model.generate(
+            tokenized_input,
+            max_new_tokens=1024,
+            do_sample=True,
+            top_p=0.95,
+            temperature=0.7,
+            repetition_penalty=1.05,
+        )[0]
+
+    decoded = tokenizer.decode(output, skip_special_tokens=True)
+    return decoded
+
+# JSON抽出（不正確な出力対策）
+def extract_json_array(text):
+    try:
+        match = re.search(r'\[\s*{.*?}\s*\]', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except Exception as e:
+        print(f"JSON抽出・整形に失敗: {e}")
+    return None
+
+#失敗時出力
+def save_failed_output(video_id, chunk_index, content):
+    fail_dir = "failures"
+    os.makedirs(fail_dir, exist_ok=True)
+    filename = os.path.join(fail_dir, f"{video_id}_{chunk_index:02d}.txt")
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"⚠️ LLM出力を {filename} に保存しました")
+
+# SQLiteに保存
+def save_qna(video_id, course, section, voice, qna_list, slide_index):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS qg (
+            qgid TEXT PRIMARY KEY,
+            videoId TEXT,
+            voice_chunk TEXT,
+            explain TEXT,
+            question TEXT,
+            priority REAL,
+            course TEXT,
+            section TEXT,
+            chunk_index INTEGER,
+            createdat TEXT
+        )
+    ''')
+
+    now = datetime.utcnow()
+    createdat = now.isoformat()
+
+    for i, item in enumerate(qna_list):
+        question = item.get("question", "").strip()
+        answer = item.get("answer", "").strip()
+        try:
+            priority = float(item.get("priority", 0.0))
+        except:
+            priority = 0.0
+
+        if not question or not answer:
+            continue
+
+        qgid = now.strftime("%Y%m%d%H%M%S") + f"{slide_index:02d}{i:02d}"
+        cur.execute("""
+            INSERT INTO qg (qgid, videoId, voice_chunk, explain, question, priority, course, section, chunk_index, createdat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (qgid, video_id, voice, answer, question, priority, course, section, slide_index, createdat))
+
+    conn.commit()
+    conn.close()
+    print(f"{len(qna_list)}件のQ&Aを保存しました。")
+
+# メイン処理
+def main():
+    video_id = "Oita-01"
+    course = "大分大学入門"
+    section = "1"
+
+    voice = load_voice_text()
+    if not voice:
+        print("音声テキストが読み込めませんでした")
+        return
+
+    prompt = make_prompt(course, ocr="", voice=voice)
+    print("Q&A生成中...")
+
+    try:
+        response = generate_qna_with_llmjp(prompt)
+        qna_list = extract_json_array(response)
+        if not qna_list:
+            raise ValueError("Q&Aリストの抽出に失敗しました")
+        save_qna(video_id, course, section, voice, qna_list, slide_index=0)
+    except Exception as e:
+        print(f"生成エラー: {e}")
+        save_failed_output(video_id, 0, response if 'response' in locals() else "(取得不可)")
+
+if __name__ == "__main__":
+    main()
+

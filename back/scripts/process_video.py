@@ -70,27 +70,36 @@ def extract_keywords_from_frame(video_path, time_sec):
         print(f"[ERROR] OCR/処理失敗: {e}")
         return ""
 
-# スライド境界の検出（キーワードベース）
+# スライド境界の検出（スライドごとにOCRを記録）
 def detect_slide_boundaries(duration):
     ocr_texts = []
     embeddings = []
     boundaries = [0.0]
+    prev_keywords = None
 
     for t in range(0, int(duration), INTERVAL):
         keywords = extract_keywords_from_frame(video_path, t)
         if not keywords:
             continue
-        ocr_texts.append((t, keywords))
+
         emb = embedder.encode(keywords, convert_to_tensor=True)
         embeddings.append(emb)
 
-        if len(embeddings) >= 2:
-            sim = util.cos_sim(embeddings[-1], embeddings[-2]).item()
-            if sim < SIM_THRESHOLD:
-                boundaries.append(float(t))
+        if prev_keywords is None:
+            prev_keywords = keywords
+            ocr_texts.append((t, keywords))  # 初回のみ登録
+            continue
+
+        sim = util.cos_sim(embeddings[-1], embeddings[-2]).item()
+        if sim < SIM_THRESHOLD:
+            boundaries.append(float(t))
+            ocr_texts.append((t, keywords))  # 境界時のみ保存
+
+        prev_keywords = keywords
 
     boundaries.append(duration)
     return ocr_texts, boundaries
+
 
 def process_and_store(ocr_texts, boundaries):
     client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -99,9 +108,19 @@ def process_and_store(ocr_texts, boundaries):
     metadatas = []
     ids = []
 
-    # 音声認識は最初に一度だけ実行
-    result = whisper_model.transcribe(video_path, verbose=False, fp16=False, language="ja", initial_prompt="")
+    # --- OCRキーワードを連結して初期プロンプトに活用 ---
+    all_ocr = "。".join(txt for _, txt in ocr_texts if txt).strip()
+ 
+    # --- Whisper音声認識（初期プロンプト付き） ---
+    result = whisper_model.transcribe(
+        video_path,
+        verbose=False,
+        fp16=False,
+        language="ja",
+        initial_prompt=all_ocr
+    )
     all_segments = result["segments"]
+
 
     for i in range(len(boundaries) - 1):
         start = boundaries[i]
@@ -147,3 +166,5 @@ if __name__ == "__main__":
     duration = get_duration(video_path)
     ocr_texts, boundaries = detect_slide_boundaries(duration)
     process_and_store(ocr_texts, boundaries)
+    
+    

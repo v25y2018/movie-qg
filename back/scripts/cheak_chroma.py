@@ -5,7 +5,7 @@ from chromadb import PersistentClient
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
 
 # 検索対象の video_id（必要に応じて変更）
-TARGET_VIDEO_ID = "net15"
+TARGET_VIDEO_ID = "Oita-01"
 
 def show_chroma_documents(video_id):
     # Chromaクライアントの初期化
