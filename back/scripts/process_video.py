@@ -1,16 +1,24 @@
 import os
-os.environ["TESSDATA_PREFIX"] = "/opt/homebrew/share/tessdata/"
-
 import sys
 import io
+import uuid
+import shutil
 import subprocess
 import MeCab
 from datetime import datetime
-import whisper
 import pytesseract
 from PIL import Image
 from sentence_transformers import SentenceTransformer, util
 import chromadb
+from mlx_whisper import transcribe
+
+# ====== デバッグ用フラグ ======
+DEBUG = False
+SKIP_OCR = False
+SKIP_ASR = False
+SKIP_SAVE = False
+VERBOSE_TRANSCRIBE = False
+
 
 # 引数
 video_path = sys.argv[1]
@@ -21,15 +29,14 @@ video_id = sys.argv[5]
 
 # 各種設定
 CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/chroma_db"))
-INTERVAL = 5  # 秒
+TMP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../src/tmp_movies"))
+TMP_DIR = os.path.join(TMP_ROOT, str(uuid.uuid4()))
+INTERVAL = 5
 SIM_THRESHOLD = 0.85
 createdat = datetime.utcnow().isoformat()
 
-# モデル
+# モデルとツール
 embedder = SentenceTransformer("cl-nagoya/ruri-small", trust_remote_code=True)
-whisper_model = whisper.load_model("small")
-
-# MeCab初期化（名詞抽出用）
 tagger = MeCab.Tagger()
 
 # 動画長取得
@@ -49,122 +56,143 @@ def extract_keywords_from_frame(video_path, time_sec):
         stderr=subprocess.DEVNULL
     )
     try:
-        image = Image.open(io.BytesIO(result.stdout)).convert("L")  # グレースケール変換
+        image = Image.open(io.BytesIO(result.stdout)).convert("L")
         image = image.point(lambda x: 0 if x < 128 else 255)  # 二値化
         text = pytesseract.image_to_string(image, lang="jpn").strip()
         if not text:
             return ""
-        # 名詞抽出
+
+        # 除外対象の表層形（助詞や不要語）
+        stop_words = {"に", "は", "を", "で", "の", "と", "が", "や", "など", "そして", "です", "ます", "から", "より", "まで", "へ", "ね", "よ"}
+
         keywords = []
-        # 名詞抽出（tagger.parseToNodeは使用可能）
         node = tagger.parseToNode(text)
         while node:
-            if "名詞" in node.feature:
-                keyword = node.surface.strip()
-                if keyword:
-                    keywords.append(keyword)
+            features = node.feature.split(",")
+            surface = node.surface.strip()
+            # 名詞かつ除外語でないものを追加
+            if "名詞" in features[0] and surface and surface not in stop_words:
+                keywords.append(surface)
             node = node.next
 
         return " ".join(keywords)
+
     except Exception as e:
         print(f"[ERROR] OCR/処理失敗: {e}")
         return ""
 
-# スライド境界の検出（スライドごとにOCRを記録）
+
+# スライド境界の検出
 def detect_slide_boundaries(duration):
     ocr_texts = []
     embeddings = []
     boundaries = [0.0]
-    prev_keywords = None
 
     for t in range(0, int(duration), INTERVAL):
+        if SKIP_OCR:
+            continue
         keywords = extract_keywords_from_frame(video_path, t)
+        if DEBUG:
+            print(f"[DEBUG] OCR抽出中: {t}s -> {keywords}")
         if not keywords:
             continue
-
+        ocr_texts.append((t, keywords))
         emb = embedder.encode(keywords, convert_to_tensor=True)
         embeddings.append(emb)
 
-        if prev_keywords is None:
-            prev_keywords = keywords
-            ocr_texts.append((t, keywords))  # 初回のみ登録
-            continue
-
-        sim = util.cos_sim(embeddings[-1], embeddings[-2]).item()
-        if sim < SIM_THRESHOLD:
-            boundaries.append(float(t))
-            ocr_texts.append((t, keywords))  # 境界時のみ保存
-
-        prev_keywords = keywords
+        if len(embeddings) >= 2:
+            sim = util.cos_sim(embeddings[-1], embeddings[-2]).item()
+            if DEBUG:
+                print(f"[DEBUG] 類似度: {sim:.3f}")
+            if sim < SIM_THRESHOLD:
+                boundaries.append(float(t))
 
     boundaries.append(duration)
     return ocr_texts, boundaries
 
+# 動画を一時ファイルとして保存
+def extract_segment(video_path, start, end, output_path):
+    subprocess.run([
+        "ffmpeg", "-y", "-ss", str(start), "-to", str(end),
+        "-i", video_path, "-c:v", "copy", "-c:a", "copy", output_path
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+# Whisper処理
+def transcribe_with_mlx_whisper(audio_path, ocr_text=""):
+    return transcribe(
+        audio_path,
+        path_or_hf_repo="mlx-community/whisper-large-v3-mlx",
+        language="ja",
+        task="transcribe",
+        initial_prompt=ocr_text,
+        verbose=VERBOSE_TRANSCRIBE,
+        condition_on_previous_text=False,
+        carry_initial_prompt=True
+    )
+
+# メイン処理
 def process_and_store(ocr_texts, boundaries):
     client = chromadb.PersistentClient(path=CHROMA_PATH)
     collection = client.get_or_create_collection("video-transcripts")
-    documents = []
-    metadatas = []
-    ids = []
-
-    # --- OCRキーワードを連結して初期プロンプトに活用 ---
-    all_ocr = "。".join(txt for _, txt in ocr_texts if txt).strip()
- 
-    # --- Whisper音声認識（初期プロンプト付き） ---
-    result = whisper_model.transcribe(
-        video_path,
-        verbose=False,
-        fp16=False,
-        language="ja",
-        initial_prompt=all_ocr
-    )
-    all_segments = result["segments"]
-
+    documents, metadatas, ids = [], [], []
 
     for i in range(len(boundaries) - 1):
         start = boundaries[i]
         end = boundaries[i+1]
+        segment_path = os.path.join(TMP_DIR, f"slide-{i}.mp4")
 
-        # セグメントをスライド範囲で抽出
-        segments = [s for s in all_segments if start <= s["start"] < end]
-        if not segments:
-            continue
+        if DEBUG:
+            print(f"[DEBUG] スライド{i}: {start}〜{end} 秒 切り出し中...")
+        extract_segment(video_path, start, end, segment_path)
 
-        voice = " ".join(s["text"].strip() for s in segments if s.get("text"))
-        if not voice.strip():
-            continue
-
-        # OCR統合（中心時刻に最も近いキーワード）
         ocr = ""
         for t, txt in reversed(ocr_texts):
             if t <= (start + end) / 2:
                 ocr = txt
                 break
 
-        documents.append(voice)
-        metadatas.append({
-            "video": video_name,
-            "video_id": video_id,
-            "course": course,
-            "section": section,
-            "start": start,
-            "end": end,
-            "createdat": createdat,
-            "ocr": ocr
-        })
-        ids.append(f"{video_id}-slide{i}")
+        try:
+            if SKIP_ASR:
+                voice = "[SKIPPED ASR]"
+            else:
+                if DEBUG:
+                    print(f"[DEBUG] 音声認識: slide-{i}.mp4 + prompt='{ocr[:30]}...'")
+                result = transcribe_with_mlx_whisper(segment_path, ocr)
+                voice = result.get("text", "").strip()
+            if not voice:
+                continue
+            documents.append(voice)
+            metadatas.append({
+                "video": video_name,
+                "video_id": video_id,
+                "course": course,
+                "section": section,
+                "start": start,
+                "end": end,
+                "createdat": createdat,
+                "ocr": ocr
+            })
+            ids.append(f"{video_id}-slide{i}")
+        except Exception as e:
+            print(f"[ERROR] スライド{i}の音声認識に失敗: {e}")
 
-    if documents:
+    if not SKIP_SAVE and documents:
+        if DEBUG:
+            print(f"[DEBUG] {len(documents)}件のドキュメントをChromaに保存中...")
         embeddings = embedder.encode(documents)
         collection.add(documents=documents, embeddings=embeddings.tolist(), metadatas=metadatas, ids=ids)
 
     print("スライド分割・音声認識・Chroma保存が完了しました")
 
-
+# 実行部分
 if __name__ == "__main__":
-    duration = get_duration(video_path)
-    ocr_texts, boundaries = detect_slide_boundaries(duration)
-    process_and_store(ocr_texts, boundaries)
-    
-    
+    os.makedirs(TMP_DIR, exist_ok=True)
+    try:
+        duration = get_duration(video_path)
+        if DEBUG:
+            print(f"[DEBUG] 動画長：{duration:.2f} 秒")
+        ocr_texts, boundaries = detect_slide_boundaries(duration)
+        process_and_store(ocr_texts, boundaries)
+    finally:
+        if os.path.exists(TMP_DIR):
+            shutil.rmtree(TMP_DIR)

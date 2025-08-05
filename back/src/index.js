@@ -57,6 +57,10 @@ app.post("/uploads", upload.single("video"), (req, res) => {
   const { course, section, title, videoId } = req.body;
   const videoName = title || path.parse(req.file.originalname).name;
   const scriptPath = path.join(__dirname, "../scripts/process_video.py");
+  
+  //ocr無しで音声認識をする場合　比較用
+  //const scriptPath = path.join(__dirname, "../scripts/asr_no_prompt.py");
+  
   const pythonPath = path.join(__dirname, "../../venv/bin/python");
 
   console.log("受け取ったメタ情報:");

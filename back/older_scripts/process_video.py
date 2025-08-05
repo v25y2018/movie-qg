@@ -18,6 +18,17 @@ course = sys.argv[3]        # コース名
 section = sys.argv[4]       # セクション名
 video_id = sys.argv[5]      # 動画ID（将来自動生成予定）
 
+# ファイル存在確認と補完
+if not os.path.exists(video_path):
+    maybe_path = os.path.join(os.path.dirname(__file__), "../src/uploads", os.path.basename(video_path))
+    if os.path.exists(maybe_path):
+        video_path = maybe_path
+    else:
+        print(f"[ERROR] 動画ファイルが見つかりません: {video_path}")
+        sys.exit(1)
+else:
+    print(f"[DEBUG] 読み込みファイルパス: {video_path}")
+
 # 現在のUTC時刻（ISO8601形式）を記録
 createdat = datetime.utcnow().isoformat()
 
@@ -35,15 +46,13 @@ if not segments:
     print("セグメントが取得できませんでした")
     sys.exit(1)
 
-# 仮OCRプロンプト作成のために使用
 ocr_list_for_prompt = []
-
-# チャンク処理1回目（OCRプロンプト作成用）
 texts = []
 metadatas = []
 chunk_text = ""
 chunk_start = None
 
+# チャンク処理1回目
 for seg in segments:
     text = seg.get("text", "").strip()
     if not text:
@@ -67,7 +76,6 @@ for seg in segments:
         chunk_text = ""
         chunk_start = None
 
-# 最後のチャンクが残っていれば追加
 if chunk_text.strip():
     texts.append(chunk_text.strip())
     metadatas.append({
@@ -80,32 +88,35 @@ if chunk_text.strip():
         "createdat": createdat
     })
 
-# OCR処理（プロンプト用）
+# OCR処理（プロンプト作成用）
 for i, meta in enumerate(metadatas):
     mid_time = (meta["start"] + meta["end"]) / 2
     try:
         result = subprocess.run([
             "ffmpeg", "-ss", str(mid_time), "-i", video_path,
             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"
-        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
         image = Image.open(io.BytesIO(result.stdout))
         ocr_text = pytesseract.image_to_string(image, lang="jpn").strip()
         metadatas[i]["ocr"] = ocr_text
         ocr_list_for_prompt.append(ocr_text)
+    except subprocess.TimeoutExpired:
+        print(f"[WARN] OCR用ffmpegタイムアウト: {mid_time}秒地点")
+        metadatas[i]["ocr"] = ""
     except Exception:
         metadatas[i]["ocr"] = ""
 
-# OCRを initial_prompt として再度音声認識
+# OCRを initial_prompt にして再度文字起こし
 ocr_prompt = " ".join(set(ocr_list_for_prompt)).strip()[:200]
 result = whisper_model.transcribe(video_path, initial_prompt=ocr_prompt, verbose=False)
 segments = result.get("segments", [])
 
-# チャンク処理2回目（最終データ用）
 texts = []
 metadatas = []
 chunk_text = ""
 chunk_start = None
 
+# チャンク処理2回目
 for seg in segments:
     text = seg.get("text", "").strip()
     if not text:
@@ -129,7 +140,6 @@ for seg in segments:
         chunk_text = ""
         chunk_start = None
 
-# 最後のチャンク
 if chunk_text.strip():
     texts.append(chunk_text.strip())
     metadatas.append({
@@ -149,22 +159,23 @@ for i, meta in enumerate(metadatas):
         result = subprocess.run([
             "ffmpeg", "-ss", str(mid_time), "-i", video_path,
             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"
-        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
         image = Image.open(io.BytesIO(result.stdout))
         ocr_text = pytesseract.image_to_string(image, lang="jpn").strip()
         metadatas[i]["ocr"] = ocr_text
+    except subprocess.TimeoutExpired:
+        print(f"[WARN] OCR用ffmpegタイムアウト: {mid_time}秒地点（再処理）")
+        metadatas[i]["ocr"] = ""
     except Exception:
         metadatas[i]["ocr"] = ""
 
-# ベクトル化（日本語対応モデル）
+# ベクトル化と保存
 embedding_model = SentenceTransformer("cl-nagoya/ruri-small", trust_remote_code=True)
 embeddings = embedding_model.encode(texts)
 
-# ChromaDB に保存
 client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = client.get_or_create_collection("video-transcripts")
 ids = [f"{video_id}-chunk{i}" for i in range(len(texts))]
 collection.add(documents=texts, embeddings=embeddings.tolist(), metadatas=metadatas, ids=ids)
 
 print("動画処理とChroma保存完了")
-
